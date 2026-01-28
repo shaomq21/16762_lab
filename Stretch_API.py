@@ -62,6 +62,12 @@ def move_by_or_to(j, delta, fallback_sleep=2.0):
 def main():
     robot = stretch_body.robot.Robot()
     robot.startup()
+    print("has robot.end_of_arm:", hasattr(robot, "end_of_arm"))
+    print("type(end_of_arm):", type(robot.end_of_arm))
+    print("end_of_arm attrs (filtered):",
+          [x for x in dir(robot.end_of_arm) if "wrist" in x or "gripper" in x or "joint" in x or "motor" in x])
+    for k in ["joints", "motors", "actuators", "devices", "tool"]:
+        print(k, "exists?", hasattr(robot.end_of_arm, k), "type:", type(getattr(robot.end_of_arm, k, None)))
 
     try:
         # -------------------------
