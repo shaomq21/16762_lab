@@ -30,16 +30,17 @@ def wait_component(comp, timeout=15.0):
         comp.wait_until_at_setpoint(timeout=timeout)
 
 def get_eoa_joint(robot, joint_name: str):
-    """
-    Access end_of_arm joint via joints dict: e.g. 'joint_wrist_yaw'
-    """
-    if not hasattr(robot, "end_of_arm"):
-        raise RuntimeError("robot has no end_of_arm")
-    if not hasattr(robot.end_of_arm, "joints") or not isinstance(robot.end_of_arm.joints, dict):
-        raise RuntimeError("robot.end_of_arm has no joints dict")
-    if joint_name not in robot.end_of_arm.joints:
-        raise KeyError(f"{joint_name} not in end_of_arm.joints. Available={list(robot.end_of_arm.joints.keys())}")
-    return robot.end_of_arm.joints[joint_name]
+    eoa = robot.end_of_arm
+    # 优先官方方法
+    if hasattr(eoa, "get_joint"):
+        j = eoa.get_joint(joint_name)
+        if j is not None:
+            return j
+    # fallback：有些版本 joint 其实在 motors dict 里
+    if hasattr(eoa, "motors") and isinstance(eoa.motors, dict) and joint_name in eoa.motors:
+        return eoa.motors[joint_name]
+    raise KeyError(f"Cannot resolve joint '{joint_name}'. Available motors={list(getattr(eoa,'motors',{}).keys())}")
+
 
 def move_by_or_to(j, delta, fallback_sleep=2.0):
     """
@@ -62,12 +63,7 @@ def move_by_or_to(j, delta, fallback_sleep=2.0):
 def main():
     robot = stretch_body.robot.Robot()
     robot.startup()
-    print("has robot.end_of_arm:", hasattr(robot, "end_of_arm"))
-    print("type(end_of_arm):", type(robot.end_of_arm))
-    print("end_of_arm attrs (filtered):",
-          [x for x in dir(robot.end_of_arm) if "wrist" in x or "gripper" in x or "joint" in x or "motor" in x])
-    for k in ["joints", "motors", "actuators", "devices", "tool"]:
-        print(k, "exists?", hasattr(robot.end_of_arm, k), "type:", type(getattr(robot.end_of_arm, k, None)))
+    print("EOA motors:", list(robot.end_of_arm.motors.keys()))
 
     try:
         # -------------------------
