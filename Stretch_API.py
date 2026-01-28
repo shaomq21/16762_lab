@@ -20,6 +20,45 @@ def safe_wait(robot, seconds=0.1):
     robot.push_command()
     time.sleep(seconds)
 
+def safe_push(robot, dt=0.05):
+    robot.push_command()
+    time.sleep(dt)
+
+def wait_component(comp, timeout=15.0):
+    # Stretch components大多有 wait_until_at_setpoint()
+    if hasattr(comp, "wait_until_at_setpoint"):
+        comp.wait_until_at_setpoint(timeout=timeout)
+
+def get_eoa_joint(robot, joint_name: str):
+    """
+    Access end_of_arm joint via joints dict: e.g. 'joint_wrist_yaw'
+    """
+    if not hasattr(robot, "end_of_arm"):
+        raise RuntimeError("robot has no end_of_arm")
+    if not hasattr(robot.end_of_arm, "joints") or not isinstance(robot.end_of_arm.joints, dict):
+        raise RuntimeError("robot.end_of_arm has no joints dict")
+    if joint_name not in robot.end_of_arm.joints:
+        raise KeyError(f"{joint_name} not in end_of_arm.joints. Available={list(robot.end_of_arm.joints.keys())}")
+    return robot.end_of_arm.joints[joint_name]
+
+def move_by_or_to(j, delta, fallback_sleep=2.0):
+    """
+    Try relative move; otherwise absolute from status['pos'].
+    """
+    if hasattr(j, "move_by"):
+        j.move_by(delta)
+        return
+    curr = 0.0
+    if hasattr(j, "status") and isinstance(j.status, dict):
+        curr = float(j.status.get("pos", 0.0))
+    if hasattr(j, "move_to"):
+        j.move_to(curr + delta)
+        return
+    # last resort
+    time.sleep(fallback_sleep)
+
+
+
 def main():
     robot = stretch_body.robot.Robot()
     robot.startup()
@@ -52,59 +91,44 @@ def main():
         #    Typical joints: wrist_yaw, wrist_pitch, wrist_roll
         # -------------------------
         # Some end-of-arm toolchains may not have all three; we guard with hasattr.
-        wrist_joints = [
-            ("wrist_yaw",  np.radians(45)),
-            ("wrist_pitch", np.radians(30)),
-            ("wrist_roll", np.radians(45)),
+        wrist = [
+            ("joint_wrist_yaw",   np.deg2rad(45)),
+            ("joint_wrist_pitch", np.deg2rad(30)),
+            ("joint_wrist_roll",  np.deg2rad(45)),
         ]
+        for name, delta in wrist:
+            j = get_eoa_joint(robot, name)
+            move_by_or_to(j, delta)
+            safe_push(robot, 0.1)
+            wait_component(j, timeout=10.0)
+            time.sleep(0.5)  # 让你肉眼更明显看到“一次一个”
 
-        for joint_name, delta in wrist_joints:
-            if hasattr(robot.end_of_arm, joint_name):
-                j = getattr(robot.end_of_arm, joint_name)
-
-                # Move relative: read current position if available, else just "move_by"
-                try:
-                    j.move_by(delta)
-                except Exception:
-                    # fallback to absolute if move_by isn't available
-                    # try using status if present
-                    curr = j.status.get('pos', 0.0) if hasattr(j, "status") else 0.0
-                    j.move_to(curr + delta)
-
-                robot.push_command()
-                # Give time for visible motion (and ensure one-at-a-time)
-                if hasattr(j, "wait_until_at_setpoint"):
-                    j.wait_until_at_setpoint()
-                else:
-                    time.sleep(2.0)
-            else:
-                print(f"[WARN] end_of_arm has no joint named '{joint_name}', skipping.")
-
-        # -------------------------
-        # 3) Open gripper then close it
-        # -------------------------
-        if hasattr(robot.end_of_arm, "stretch_gripper"):
-            g = robot.end_of_arm.stretch_gripper
-            # open
+        # 3) gripper open/close
+        # 你的 gripper 是 finger joint；左右选一个即可（通常会联动）
+        gripper_joint_name = None
+        for cand in ["joint_gripper_finger_left", "joint_gripper_finger_right"]:
             try:
-                g.open()
+                _ = get_eoa_joint(robot, cand)
+                gripper_joint_name = cand
+                break
             except Exception:
-                # some versions: move_to(1.0) for open
-                g.move_to(1.0)
-            robot.push_command()
-            time.sleep(2.0)
+                pass
 
-            # close
-            try:
-                g.close()
-            except Exception:
-                # some versions: move_to(0.0) for close
-                g.move_to(0.0)
-            robot.push_command()
-            time.sleep(2.0)
-        else:
-            print("[WARN] No stretch_gripper found under end_of_arm; skipping gripper open/close.")
+        if gripper_joint_name is None:
+            raise RuntimeError("No gripper finger joint found (left/right).")
 
+        g = get_eoa_joint(robot, gripper_joint_name)
+
+        # 注意：不同夹爪 pos 单位/范围不同（rad 或 m），下面用“相对运动”更稳
+        move_by_or_to(g, +0.015)   # 尝试打开一点
+        safe_push(robot, 0.1)
+        wait_component(g, timeout=10.0)
+        time.sleep(1.0)
+
+        move_by_or_to(g, -0.015)   # 再关回去
+        safe_push(robot, 0.1)
+        wait_component(g, timeout=10.0)
+        time.sleep(1.0)
         # -------------------------
         # 4) Rotate both motors connected to the RealSense (head pan/tilt), one at a time
         # -------------------------
