@@ -93,44 +93,40 @@ def main():
         #    Typical joints: wrist_yaw, wrist_pitch, wrist_roll
         # -------------------------
         # Some end-of-arm toolchains may not have all three; we guard with hasattr.
-        wrist = [
-            ("joint_wrist_yaw",   np.deg2rad(45)),
-            ("joint_wrist_pitch", np.deg2rad(30)),
-            ("joint_wrist_roll",  np.deg2rad(45)),
+        eoa = robot.end_of_arm
+        print("EOA motors:", list(eoa.motors.keys()))  # should show wrist_* + stretch_gripper
+
+        # --- wrist one-at-a-time ---
+        moves = [
+            ("wrist_yaw",   np.deg2rad(45)),
+            ("wrist_pitch", np.deg2rad(30)),
+            ("wrist_roll",  np.deg2rad(45)),
         ]
-        for name, delta in wrist:
-            j = get_eoa_joint(robot, name)
-            move_by_or_to(j, delta)
-            safe_push(robot, 0.1)
-            wait_component(j, timeout=10.0)
-            time.sleep(0.5)  # 让你肉眼更明显看到“一次一个”
 
-        # 3) gripper open/close
-        # 你的 gripper 是 finger joint；左右选一个即可（通常会联动）
-        gripper_joint_name = None
-        for cand in ["joint_gripper_finger_left", "joint_gripper_finger_right"]:
-            try:
-                _ = get_eoa_joint(robot, cand)
-                gripper_joint_name = cand
-                break
-            except Exception:
-                pass
+        for name, delta in moves:
+            m = eoa.motors[name]
+            m.move_by(delta)
+            robot.push_command()
+            if hasattr(m, "wait_until_at_setpoint"):
+                m.wait_until_at_setpoint(timeout=10.0)
+            else:
+                time.sleep(2.0)
+            time.sleep(0.5)
 
-        if gripper_joint_name is None:
-            raise RuntimeError("No gripper finger joint found (left/right).")
+        # --- gripper open then close ---
+        g = eoa.motors["stretch_gripper"]
 
-        g = get_eoa_joint(robot, gripper_joint_name)
-
-        # 注意：不同夹爪 pos 单位/范围不同（rad 或 m），下面用“相对运动”更稳
-        move_by_or_to(g, +0.015)   # 尝试打开一点
-        safe_push(robot, 0.1)
-        wait_component(g, timeout=10.0)
+        # open a bit (relative is safest across configs)
+        g.move_by(+0.02)
+        robot.push_command()
         time.sleep(1.0)
 
-        move_by_or_to(g, -0.015)   # 再关回去
-        safe_push(robot, 0.1)
-        wait_component(g, timeout=10.0)
+        # close back
+        g.move_by(-0.02)
+        robot.push_command()
         time.sleep(1.0)
+
+        print("[DONE] wrist + gripper demo complete.")
         # -------------------------
         # 4) Rotate both motors connected to the RealSense (head pan/tilt), one at a time
         # -------------------------
